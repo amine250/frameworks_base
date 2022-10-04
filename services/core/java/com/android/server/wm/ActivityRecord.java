@@ -354,8 +354,6 @@ import com.android.server.wm.utils.InsetUtils;
 
 import dalvik.annotation.optimization.NeverCompile;
 
-import com.google.android.collect.Sets;
-
 import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.File;
@@ -3406,20 +3404,6 @@ final class ActivityRecord extends WindowToken implements WindowManagerService.A
                 }
                 mDisplayContent.prepareAppTransition(TRANSIT_CLOSE);
 
-                // When finishing the activity preemptively take the snapshot before the app window
-                // is marked as hidden and any configuration changes take place
-                // Note that RecentsAnimation will handle task snapshot while switching apps with
-                // the best capture timing (e.g. IME window capture),
-                // No need additional task capture while task is controlled by RecentsAnimation.
-                if (mAtmService.mWindowManager.mTaskSnapshotController != null
-                        && !(task.isAnimatingByRecents()
-                                || mTransitionController.inRecentsTransition(task))) {
-                    final ArraySet<Task> tasks = Sets.newArraySet(task);
-                    mAtmService.mWindowManager.mTaskSnapshotController.snapshotTasks(tasks);
-                    mAtmService.mWindowManager.mTaskSnapshotController
-                            .addSkipClosingAppSnapshotTasks(tasks);
-                }
-
                 // Tell window manager to prepare for this one to be removed.
                 setVisibility(false);
 
@@ -4884,8 +4868,12 @@ final class ActivityRecord extends WindowToken implements WindowManagerService.A
     ActivityOptions takeOptions() {
         if (DEBUG_TRANSITION) Slog.i(TAG, "Taking options for " + this + " callers="
                 + Debug.getCallers(6));
+        if (mPendingOptions == null) return null;
         final ActivityOptions opts = mPendingOptions;
         mPendingOptions = null;
+        // Strip sensitive information from options before sending it to app.
+        opts.setRemoteTransition(null);
+        opts.setRemoteAnimationAdapter(null);
         return opts;
     }
 

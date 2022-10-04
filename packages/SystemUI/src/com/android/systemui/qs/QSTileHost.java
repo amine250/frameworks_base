@@ -113,8 +113,8 @@ public class QSTileHost implements QSHost, Tunable, PluginListener<QSFactory>, D
 
     private final TileServiceRequestController mTileServiceRequestController;
     private TileLifecycleManager.Factory mTileLifeCycleManagerFactory;
-
     private final ContentObserver mSettingsObserver;
+    private final Handler mMainHandler;
     private boolean mIsSecureTileDisabledOnLockscreen = true;
 
     @Inject
@@ -135,7 +135,8 @@ public class QSTileHost implements QSHost, Tunable, PluginListener<QSFactory>, D
             SecureSettings secureSettings,
             CustomTileStatePersister customTileStatePersister,
             TileServiceRequestController.Builder tileServiceRequestControllerBuilder,
-            TileLifecycleManager.Factory tileLifecycleManagerFactory
+            TileLifecycleManager.Factory tileLifecycleManagerFactory,
+            @Background Handler backgroundHandler
     ) {
         mIconController = iconController;
         mContext = context;
@@ -148,6 +149,7 @@ public class QSTileHost implements QSHost, Tunable, PluginListener<QSFactory>, D
         mBroadcastDispatcher = broadcastDispatcher;
         mTileServiceRequestController = tileServiceRequestControllerBuilder.create(this);
         mTileLifeCycleManagerFactory = tileLifecycleManagerFactory;
+        mMainHandler = mainHandler;
 
         mInstanceIdSequence = new InstanceIdSequence(MAX_QS_INSTANCE_ID);
         mCentralSurfacesOptional = centralSurfacesOptional;
@@ -158,6 +160,17 @@ public class QSTileHost implements QSHost, Tunable, PluginListener<QSFactory>, D
         mUserTracker = userTracker;
         mSecureSettings = secureSettings;
         mCustomTileStatePersister = customTileStatePersister;
+
+        backgroundHandler.post(this::setSecureTileDisabledOnLockscreen);
+        mSettingsObserver = new ContentObserver(backgroundHandler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                setSecureTileDisabledOnLockscreen();
+            }
+        };
+        mSecureSettings.registerContentObserverForUser(
+            Settings.Secure.DISABLE_SECURE_TILES_ON_LOCKSCREEN,
+            mSettingsObserver, UserHandle.USER_ALL);
 
         mainHandler.post(() -> {
             // This is technically a hack to avoid circular dependency of
@@ -170,28 +183,6 @@ public class QSTileHost implements QSHost, Tunable, PluginListener<QSFactory>, D
         });
         mContext.registerReceiver(mLiveDisplayReceiver, new IntentFilter(
                 "lineageos.intent.action.INITIALIZE_LIVEDISPLAY"));
-
-        setSecureTileDisabledOnLockscreen();
-        mSettingsObserver = new ContentObserver(mainHandler) {
-            @Override
-            public void onChange(boolean selfChange) {
-                setSecureTileDisabledOnLockscreen();
-            }
-        };
-        mSecureSettings.registerContentObserverForUser(
-            Settings.Secure.DISABLE_SECURE_TILES_ON_LOCKSCREEN,
-            mSettingsObserver, UserHandle.USER_ALL);
-    }
-
-    private void setSecureTileDisabledOnLockscreen() {
-        mIsSecureTileDisabledOnLockscreen = mSecureSettings.getIntForUser(
-            Settings.Secure.DISABLE_SECURE_TILES_ON_LOCKSCREEN,
-            1, UserHandle.USER_CURRENT) == 1;
-        mTiles.values().stream()
-            .filter(tile -> tile instanceof SecureQSTile)
-            .map(tile -> (SecureQSTile) tile)
-            .forEach(tile ->
-                tile.setDisabledOnLockscreen(mIsSecureTileDisabledOnLockscreen));
     }
 
     private final BroadcastReceiver mLiveDisplayReceiver = new BroadcastReceiver() {
@@ -203,6 +194,20 @@ public class QSTileHost implements QSHost, Tunable, PluginListener<QSFactory>, D
             onTuningChanged(TILES_SETTING, value);
         }
     };
+
+    private void setSecureTileDisabledOnLockscreen() {
+        final boolean disabled = mSecureSettings.getIntForUser(
+            Settings.Secure.DISABLE_SECURE_TILES_ON_LOCKSCREEN,
+            1, UserHandle.USER_CURRENT) == 1;
+        mMainHandler.post(() -> {
+            mIsSecureTileDisabledOnLockscreen = disabled;
+            mTiles.values().stream()
+                .filter(tile -> tile instanceof SecureQSTile)
+                .map(tile -> (SecureQSTile) tile)
+                .forEach(tile ->
+                    tile.setDisabledOnLockscreen(mIsSecureTileDisabledOnLockscreen));
+        });
+    }
 
     public StatusBarIconController getIconController() {
         return mIconController;
